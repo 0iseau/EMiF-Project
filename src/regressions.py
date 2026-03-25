@@ -19,87 +19,26 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
-def load_daily_data(
-    raw_path: str = "data/raw/data_hec_project_1.xlsx",
-    *,
-    sheet_name: str = "Daily",
-    skiprows: int = 5,
-) -> pd.DataFrame:
-    """Load the daily dataset from the raw Excel file.
+# Data preparation
+data = pd.read_excel("data/raw/data_hec_project_1.xlsx", skiprows=5, sheet_name="Daily")
 
-    Notes
-    -----
-    In the provided Excel, the date column is named 'Dates' and some column
-    names include trailing spaces (e.g., 'WTI  ').
-    """
-    df = pd.read_excel(raw_path, sheet_name=sheet_name, skiprows=skiprows)
-    df = df.copy()
-    df.columns = df.columns.astype(str).str.strip()
-    df = df.replace(["#N/A N/A", "NA", ""], pd.NA)
-
-    if "Date" in df.columns:
-        date_col = "Date"
-    elif "Dates" in df.columns:
-        date_col = "Dates"
-    else:
-        raise KeyError(f"No date column found. Columns: {list(df.columns)}")
-
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-    df = df.dropna(subset=[date_col]).sort_values(date_col)
-    df = df.rename(columns={date_col: "Date"})
-    return df
+SP = data["SP500"].replace(["#N/A N/A", "NA", ""], pd.NA).apply(pd.to_numeric, errors="coerce")
+log_returns_SP = np.log(SP).diff().dropna()
 
 
-def to_monthly_last_observation(daily_df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate daily data to monthly by taking the last observation of each month."""
-    if "Date" not in daily_df.columns:
-        raise ValueError("daily_df must have a 'Date' column")
-    monthly = (
-        daily_df.set_index("Date")
-        .sort_index()
-        .resample("ME")
-        .last()
-        .dropna(how="all")
-        .reset_index()
-    )
-    return monthly
+WTI = data["WTI"].replace(["#N/A N/A", "NA", ""], pd.NA).apply(pd.to_numeric, errors="coerce")
+log_returns_WTI = np.log(WTI).diff().dropna()
 
 
-def prepare_monthly_sp500_wti(
-    raw_path: str = "data/raw/data_hec_project_1.xlsx",
-    *,
-    sp_col: str = "SP500",
-    wti_col: str = "WTI",
-) -> pd.DataFrame:
-    """Prepare monthly series for S&P500 and WTI (levels), plus WTI log-change."""
-    daily = load_daily_data(raw_path)
-    monthly = to_monthly_last_observation(daily)
-
-    if sp_col not in monthly.columns:
-        raise KeyError(f"Missing {sp_col!r} column. Available: {list(monthly.columns)}")
-    if wti_col not in monthly.columns:
-        raise KeyError(f"Missing {wti_col!r} column. Available: {list(monthly.columns)}")
-
-    sp = pd.to_numeric(monthly[sp_col], errors="coerce")
-    wti = pd.to_numeric(monthly[wti_col], errors="coerce")
-
-    df = pd.DataFrame({"Date": monthly["Date"], sp_col: sp, wti_col: wti}).dropna()
-    df = df.sort_values("Date").reset_index(drop=True)
-    df[f"{wti_col}_logdiff"] = np.log(df[wti_col]).diff()
-    df = df.dropna().reset_index(drop=True)
-    return df
 
 
-def ols(X: pd.DataFrame, y: pd.Series, *, add_constant: bool = True) -> sm.regression.linear_model.RegressionResultsWrapper:
-    """OLS regression wrapper."""
-    if add_constant:
-        X = sm.add_constant(X, has_constant="add")
-    return sm.OLS(y, X, missing="drop").fit()
+def ols(X,y):
+    '''
+    OLS regression : Stock price = f(oil price)
+    '''
+    X = sm.add_constant(X)
+    model = sm.OLS(y, X).fit()
 
+    return model.summary(), model.params, model.pvalues
 
-if __name__ == "__main__":
-    df = prepare_monthly_sp500_wti()
-    y = df["SP500"]
-    X = df[["WTI_logdiff"]]
-    model = ols(X, y)
-    print(model.summary())
+print(ols(log_returns_WTI, log_returns_SP))
